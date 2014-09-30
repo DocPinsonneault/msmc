@@ -26,6 +26,8 @@ import model.psmc_model;
 import powell;
 import logger;
 
+double delta_x = 1.0e-4;
+
 PSMCmodel getMaximization(double[][] transitions, double[][2] emissions, PSMCmodel params,
                           in size_t[] timeSegmentPattern, bool fixedRecombination)
 {
@@ -38,6 +40,81 @@ PSMCmodel getMaximization(double[][] transitions, double[][2] emissions, PSMCmod
   auto endVal = minFunc(xNew);
   logInfo(format(", Q-function before: %s, after:%s\n", startVal, endVal));
   return minFunc.makeParamsFromVec(xNew);
+}
+
+double[2][] getLambdaCI(double[][] transitions, double[][2] emissions, PSMCmodel params, in size_t[] timeSegmentPattern) {
+
+  auto minFunc = new MinFunc(transitions, emissions, params, timeSegmentPattern, false);
+
+  auto basicLL = minFunc.logLikelihood(params);
+  
+  auto lambdaVec = params.lambdaVec.dup;
+  auto ret = new double[2][lambdaVec.length];
+  
+  auto indexOffset = 0;
+  foreach(nrI; timeSegmentPattern) {
+    auto newLambdaVec = lambdaVec.dup;
+    foreach(i; 0 .. nrI)
+      newLambdaVec[indexOffset + i] *= exp(-delta_x);
+    auto newParams = new PSMCmodel(params.mutationRate, params.recombinationRate, newLambdaVec, params.timeIntervals);
+    auto newLLsmaller = minFunc.logLikelihood(newParams);
+
+    newLambdaVec = lambdaVec.dup;
+    foreach(i; 0 .. nrI)
+      newLambdaVec[indexOffset + i] *= exp(delta_x);
+    newParams = new PSMCmodel(params.mutationRate, params.recombinationRate, newLambdaVec, params.timeIntervals);
+    auto newLLgreater = minFunc.logLikelihood(newParams);
+    
+    auto limitsCI = getCIlimits(basicLL, 0.001, newLLsmaller, newLLgreater);
+    foreach(i; 0 .. nrI) {
+      ret[indexOffset + i][0] = lambdaVec[indexOffset + i] * exp(limitsCI[0]);
+      ret[indexOffset + i][1] = lambdaVec[indexOffset + i] * exp(limitsCI[1]);
+    }
+    
+    indexOffset += nrI;
+  }
+  return ret;
+}
+
+double[2] getRecombinationCI(double[][] transitions, double[][2] emissions, PSMCmodel params, in size_t[] timeSegmentPattern) {
+  auto minFunc = new MinFunc(transitions, emissions, params, timeSegmentPattern, false);
+
+  auto basicLL = minFunc.logLikelihood(params);
+  
+  auto rec = params.recombinationRate;
+  
+  auto newRec = rec * exp(-delta_x);
+  auto newParams = new PSMCmodel(params.mutationRate, newRec, params.lambdaVec, params.timeIntervals);
+  auto newLLsmaller = minFunc.logLikelihood(newParams);
+
+  newRec = rec * exp(delta_x);
+  newParams = new PSMCmodel(params.mutationRate, newRec, params.lambdaVec, params.timeIntervals);
+  auto newLLgreater = minFunc.logLikelihood(newParams);
+  
+  auto CI = getCIlimits(basicLL, delta_x, newLLsmaller, newLLgreater);
+  
+  double[2] ret;
+  ret[0] = rec * exp(CI[0]);
+  ret[1] = rec * exp(CI[1]);
+  
+  return ret;
+}
+
+double[2] getCIlimits(double basicLL, double delta_x, double yl, double yh) {
+  auto xl = -delta_x;
+  auto xh = delta_x;
+  
+  auto denom = (xl*xl * xh - xl * xh*xh);
+  auto a = (yl * xh - xl * yh) / denom;
+  auto b = (xl*xl * yh - yl * xh*xh) / denom;
+  
+  auto mu = -b / (2.0 * a);
+  auto sigma = sqrt(-1.0 / (2.0 * a));
+  
+  double[2] ret;
+  ret[0] = mu - 2.0 * sigma;
+  ret[1] = mu + 2.0 * sigma;
+  return ret;
 }
 
 class MinFunc {

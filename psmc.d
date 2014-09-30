@@ -216,13 +216,17 @@ void run() {
     auto transitions = expectationResult[0];
     auto emissions = expectationResult[1];
     auto logLikelihood = expectationResult[2];
-    printLoop(loopFileName, params, logLikelihood);
+    
+    auto newParams = getMaximization(transitions, emissions, params, timeSegmentPattern, fixedRecombination);
+    params = newParams;
+    auto lambdaCI = getLambdaCI(transitions, emissions, params, timeSegmentPattern);
+    auto recCI = getRecombinationCI(transitions, emissions, params, timeSegmentPattern);
+    
+    printLoop(loopFileName, params, logLikelihood, recCI, lambdaCI);
     if(verbose) {
       auto filename = outFilePrefix ~ format(".loop_%s.expectationMatrix.txt", iteration);
       printMatrix(filename, transitions, emissions);
     }
-    auto newParams = getMaximization(transitions, emissions, params, timeSegmentPattern, fixedRecombination);
-    params = newParams;
   }
   
   printFinal(finalFileName, params);
@@ -252,9 +256,16 @@ void printMatrix(string filename, double[][] transitions, double[][2] emissions)
   f.writeln(emissions[1].map!"text(a)"().join("\t"));
 }
 
-void printLoop(string filename, PSMCmodel params, double logLikelihood) {
+void printLoop(string filename, PSMCmodel params, double logLikelihood, double[2] recCI, double[2][] lambdaCI) {
   auto f = File(filename, "a");
-  f.writefln("%s\t%.2f\t%s\t%s", params.recombinationRate, logLikelihood, params.timeIntervals.boundaries.map!(a => text(a * params.mutationRate)).join(",").array(), params.lambdaVec.map!(a => text(a / mutationRate)).join(",").array());
+  f.writef("%s,%s,%s\t%.2f\t%s\t", params.recombinationRate, recCI[0], recCI[1], logLikelihood, 
+           params.timeIntervals.boundaries.map!(a => text(a * params.mutationRate)).join(",").array());
+  foreach(i; 0 .. lambdaCI.length) {
+    f.writef("%s,%s,%s", params.lambdaVec[i] / mutationRate, lambdaCI[i][0] / mutationRate, lambdaCI[i][1] / mutationRate);
+    if(i < lambdaCI.length - 1)
+      f.write(",");
+  }
+  f.write("\n");
 }
 
 void printFinal(string filename, PSMCmodel params) { 
